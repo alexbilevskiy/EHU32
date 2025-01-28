@@ -18,10 +18,10 @@ void run() {
     xTaskCreate(canTransmitTask, "CANbusTransmitTask", 4096, NULL, 2, &canTransmitTaskHandle);
     xTaskCreate(canProcessTask, "CANbusMessageProcessor", 8192, NULL, 3, &canProcessTaskHandle);
     xTaskCreate(canDisplayTask, "DisplayUpdateTask", 8192, NULL, 3, &canDisplayTaskHandle);
-//    vTaskSuspend(canDisplayTaskHandle);
-//    xTaskCreatePinnedToCore(canWatchdogTask, "WatchdogTask", 2048, NULL, 20, &canWatchdogTaskHandle, 0);
+    //vTaskSuspend(canDisplayTaskHandle);
+    //xTaskCreatePinnedToCore(canWatchdogTask, "WatchdogTask", 2048, NULL, 20, &canWatchdogTaskHandle, 0);
     xTaskCreatePinnedToCore(canMessageDecoder, "MessageDecoder", 2048, NULL, 5, &canMessageDecoderTaskHandle, 0);
-//    vTaskSuspend(canMessageDecoderTaskHandle);
+    //vTaskSuspend(canMessageDecoderTaskHandle);
     xTaskCreatePinnedToCore(canAirConMacroTask, "AirConMacroTask", 2048, NULL, 10, &canAirConMacroTaskHandle, 0);
     vTaskSuspend(canAirConMacroTaskHandle);       // Aircon macro task exists solely to execute simulated button presses asynchronously, as such it is only started when needed
 

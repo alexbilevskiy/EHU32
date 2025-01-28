@@ -97,16 +97,12 @@ void canReceiveTask(void *pvParameters){
   }
 }
 
-// this task processes filtered CAN frames read from canRxQueue
-void canProcessTask(void *pvParameters){
-  static twai_message_t RxMsg;
-  uint8_t payload_size=0, payload_bytes_queued=0, payload_type=0;
-  while(1){
-    xQueueReceive(canRxQueue, &RxMsg, portMAX_DELAY);     // receives data from the internal queue
-    switch(RxMsg.identifier){
+void canProcessMessage(uint32_t identifier, uint8_t data[8]){
+    uint8_t payload_size=0, payload_bytes_queued=0, payload_type=0;
+    switch(identifier){
       case 0x201: {                                         // radio button decoder
-        if(RxMsg.data[0]==0x01 && RxMsg.data[2]>=10){
-          switch(RxMsg.data[1]){
+        if(data[0]==0x01 && data[2]>=10){
+          switch(data[1]){
             case 0x30:  canActionEhuButton0();      // CD30 has no '0' button!
                         break;
             case 0x31:  canActionEhuButton1();
@@ -133,8 +129,8 @@ void canProcessTask(void *pvParameters){
         break;
       }
       case 0x206: {                                  // decodes steering wheel buttons
-        if(bt_connected && RxMsg.data[0]==0x0 && CAN_allowDisplay){                     // makes sure "Aux" is displayed, otherwise forward/next buttons will have no effect
-          switch(RxMsg.data[1]){
+        if(bt_connected && data[0]==0x0 && CAN_allowDisplay){                     // makes sure "Aux" is displayed, otherwise forward/next buttons will have no effect
+          switch(data[1]){
             case 0x81:  DEBUG_PRINT("BUTTON PLAYPAUSE");
                         id(b_play).press();
                         break;
@@ -150,18 +146,18 @@ void canProcessTask(void *pvParameters){
         break;
       }
       case 0x208: {                               // AC panel button event
-        if((RxMsg.data[0]==0x0) && (RxMsg.data[1]==0x17) && (RxMsg.data[2]<0x01)){          // FIXME!
+        if((data[0]==0x0) && (data[1]==0x17) && (data[2]<0x01)){          // FIXME!
           vTaskResume(canAirConMacroTaskHandle);   // start AC macro
         }
         break;
       }
       case 0x2C1: {
         if(CAN_MessageReady) xTaskNotifyGive(canDisplayTaskHandle);  // let the display update task know that the data is ready to be transmitted
-        canISO_frameSpacing=RxMsg.data[2];            // dynamically adjust ISO 15765-2 frame spacing delay
+        canISO_frameSpacing=data[2];            // dynamically adjust ISO 15765-2 frame spacing delay
         break;
       }
       case 0x501: {                                         // CD30MP3 goes to sleep -> disable bluetooth connectivity
-        if(RxMsg.data[3]==0x18){
+        if(data[3]==0x18){
           DEBUG_PRINT("CD30MP3 SLEEP");
         }
         break;
@@ -170,10 +166,10 @@ void canProcessTask(void *pvParameters){
           if(disp_mode==1 || disp_mode==2){
             xSemaphoreTake(BufferSemaphore, portMAX_DELAY);
             DEBUG_PRINT("CAN: Got measurements from DIS: ");
-            switch(RxMsg.data[0]){              // measurement block ID -> update data which the message is referencing, I may implement more cases in the future which is why switch is there
+            switch(data[0]){              // measurement block ID -> update data which the message is referencing, I may implement more cases in the future which is why switch is there
               case 0x0B:  {             // 0x0B references coolant temps
                 DEBUG_PRINT("coolant\n");
-                int CAN_data_coolant=RxMsg.data[5]-40;
+                int CAN_data_coolant=data[5]-40;
                 snprintf(voltage_buffer, sizeof(voltage_buffer), "No additional data available");
                 snprintf(coolant_buffer, sizeof(coolant_buffer), "Coolant temp: %d%c%cC   ", CAN_data_coolant, 0xC2, 0xB0);
                 //snprintf(speed_buffer, sizeof(speed_buffer), "ECC not present"); // -> speed received as part of the 0x4E8 msg
@@ -197,9 +193,9 @@ void canProcessTask(void *pvParameters){
       case 0x548: {                             // AC measurement blocks
           if(disp_mode==1 || disp_mode==2) xSemaphoreTake(BufferSemaphore, portMAX_DELAY);    // if we're in body data mode, take the semaphore to prevent the buffer being modified while the display message is being compiled
           DEBUG_PRINT("CAN: Got measurements from ECC: ");
-          switch(RxMsg.data[0]){              // measurement block ID -> update data which the message is referencing
+          switch(data[0]){              // measurement block ID -> update data which the message is referencing
             case 0x07:  {             // 0x10 references battery voltage
-              CAN_data_voltage=RxMsg.data[2];
+              CAN_data_voltage=data[2];
               CAN_data_voltage/=10;
               snprintf(voltage_buffer, sizeof(voltage_buffer), "Voltage: %.1f V  ", CAN_data_voltage);
               CAN_voltage_recvd=1;
@@ -207,7 +203,7 @@ void canProcessTask(void *pvParameters){
               break;
             }
             case 0x10:  {             // 0x10 references coolant temps
-              unsigned short raw_coolant=(RxMsg.data[3]<<8 | RxMsg.data[4]);
+              unsigned short raw_coolant=(data[3]<<8 | data[4]);
               CAN_data_coolant=raw_coolant;
               CAN_data_coolant/=10;
               snprintf(coolant_buffer, sizeof(coolant_buffer), "Coolant temp: %.1f%c%cC   ", CAN_data_coolant, 0xC2, 0xB0);
@@ -216,12 +212,12 @@ void canProcessTask(void *pvParameters){
               break;
             }
             case 0x11:  {             // 0x11 references RPMs and speed
-              CAN_data_rpm=(RxMsg.data[1]<<8 | RxMsg.data[2]);
-              CAN_data_speed=RxMsg.data[4];
+              CAN_data_rpm=(data[1]<<8 | data[2]);
+              CAN_data_speed=data[4];
               snprintf(speed_buffer, sizeof(speed_buffer), "%d km/h %d RPM     ", CAN_data_speed, CAN_data_rpm);
               CAN_speed_recvd=1;
               DEBUG_PRINT("speed and RPMs\n");
-              break; 
+              break;
             }
             default:    break;
           }
@@ -237,12 +233,12 @@ void canProcessTask(void *pvParameters){
       case 0x4E8: {                               // this provides speed and RPMs right from the bus, only for 3-line measurement mode (disp_mode 1) IF there's no ECC module detected
         if((disp_mode==1) && !ECC_present){
           if(disp_mode==1) xSemaphoreTake(BufferSemaphore, portMAX_DELAY);
-          CAN_data_rpm=(RxMsg.data[2]<<8 | RxMsg.data[3]);
+          CAN_data_rpm=(data[2]<<8 | data[3]);
           CAN_data_rpm/=4;                                // realized this thanks to testing done by @KingSilverHaze
-          if(RxMsg.data[6]==0x01){     // vehicle is standing still -> bytes 4 and 5 not updated, assume 0 km/h
+          if(data[6]==0x01){     // vehicle is standing still -> bytes 4 and 5 not updated, assume 0 km/h
             CAN_data_speed=0;           // when not moving, the speed value will not reflect 0 km/h
           } else {
-            CAN_data_speed=(RxMsg.data[4]<<8 | RxMsg.data[5]);        // speed is a 16-bit integer multiplied by 128
+            CAN_data_speed=(data[4]<<8 | data[5]);        // speed is a 16-bit integer multiplied by 128
             CAN_data_speed/=128;
           }
           snprintf(speed_buffer, sizeof(speed_buffer), "%d km/h %d RPM     ", CAN_data_speed, CAN_data_rpm);
@@ -260,14 +256,14 @@ void canProcessTask(void *pvParameters){
 //          ehu_started=1;
 //        }
         if(disp_mode==0){      // if not a consecutive frame, then we queue that data for decoding by another task
-          if(RxMsg.data[0]==0x10 && (RxMsg.data[2]==0x40 || RxMsg.data[2]==0xC0)){
-            payload_size=RxMsg.data[1]-6;
+          if(data[0]==0x10 && (data[2]==0x40 || data[2]==0xC0)){
+            payload_size=data[1]-6;
             payload_bytes_queued=0;         // reset the counter
-            payload_type=RxMsg.data[5];     // this is a hack for CD70/DVD90, because they utilize an audio menu, they send messages "under the hood" which don't contain "Aux"
+            payload_type=data[5];     // this is a hack for CD70/DVD90, because they utilize an audio menu, they send messages "under the hood" which don't contain "Aux"
             if(payload_type==0x03) xQueueSend(canDispQueue, &payload_size, portMAX_DELAY);    // queue payload size decreased by 6 since we don't count the 6 bytes in first frame
           } else {
             for(int i=1; i<=7 && payload_bytes_queued<payload_size; i++){
-              if(payload_type==0x03) xQueueSend(canDispQueue, &RxMsg.data[i], portMAX_DELAY);    // queue raw payload data, skipping consecutive frame index data
+              if(payload_type==0x03) xQueueSend(canDispQueue, &data[i], portMAX_DELAY);    // queue raw payload data, skipping consecutive frame index data
               payload_bytes_queued++;
             }
           }
@@ -284,6 +280,14 @@ void canProcessTask(void *pvParameters){
       }
       default:    break;
     }
+}
+
+// this task processes filtered CAN frames read from canRxQueue
+void canProcessTask(void *pvParameters){
+  static twai_message_t RxMsg;
+  while(1){
+    xQueueReceive(canRxQueue, &RxMsg, portMAX_DELAY);     // receives data from the internal queue
+    canProcessMessage(RxMsg.identifier, RxMsg.data);
   }
 }
 
